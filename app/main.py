@@ -345,8 +345,8 @@ async def edit(
     work = imaging.open_image(work_png)
     painted_bytes = await mask.read() if mask else b""
     painted = imaging.painted_alpha(painted_bytes, work.size) if painted_bytes else None
-    if painted is not None and painted.getextrema()[1] == 0:
-        painted = None
+    if painted is not None and painted.histogram()[255] < max(30, painted.width * painted.height * 0.0001):
+        painted = None  # 지우개 잔상 등 아주 작은 얼룩은 '칠하지 않음'으로 취급
 
     api_prompt, api_images, api_mask = prompt, [work_png], None
     if painted is not None:

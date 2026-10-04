@@ -8,7 +8,10 @@ async function renderUsage() {
   const both = (v) => `${fmtUsd(v)} <span class="hint-i">(${fmtKrw(v)})</span>`;
   const budget = u.monthly_budget_usd;
   const pct = budget ? Math.min(100, u.month_usd / budget * 100) : 0;
-  const maxDay = Math.max(...u.daily.map((d) => d.cost), 0.0001);
+  const maxCost = Math.max(0, ...u.daily.map((d) => d.cost));
+  const byImages = maxCost === 0;  // 비용이 모두 0이면(데모 등) 이미지 수로 막대를 그린다
+  const metric = (d) => (byImages ? d.images : d.cost);
+  const maxDay = Math.max(1e-9, ...u.daily.map(metric));
   box.innerHTML = `
     <h2>💰 가격·사용량</h2>
     <p class="sub">이 앱으로 만든 이미지의 비용을 기록합니다. OpenAI·BFL은 API 응답의 사용량(토큰/credit)으로 <b>실측</b>하고, Google은 표 단가로 <b>추정</b>합니다. 환율 ${u.usd_krw}원/USD.</p>
@@ -39,8 +42,8 @@ async function renderUsage() {
 
     <div class="card">
       <h3>📈 최근 30일 일별 비용</h3>
-      ${u.daily.length ? `<div class="daily">${u.daily.map((d) => `<div class="d" style="height:${Math.max(2, d.cost / maxDay * 100)}%" title="${d.day} · ${fmtUsd(d.cost)} · ${d.images}장"></div>`).join("")}</div>
-        <div class="daily-axis"><span>${u.daily[0].day}</span><span>최대 ${fmtUsd(maxDay)}/일</span><span>${u.daily[u.daily.length - 1].day}</span></div>` : `<div class="hint">아직 기록이 없습니다.</div>`}
+      ${u.daily.length ? `<div class="daily">${u.daily.map((d) => `<div class="d" style="height:${Math.max(2, metric(d) / maxDay * 100)}%" title="${d.day} · ${fmtUsd(d.cost)} · ${d.images}장"></div>`).join("")}</div>
+        <div class="daily-axis"><span>${u.daily[0].day}</span><span>${byImages ? `비용 기록 없음 — 이미지 수 기준, 최대 ${Math.round(maxDay)}장/일` : `최대 ${fmtUsd(maxDay)}/일`}</span><span>${u.daily[u.daily.length - 1].day}</span></div>` : `<div class="hint">아직 기록이 없습니다.</div>`}
     </div>
 
     <div class="card">

@@ -22,7 +22,7 @@ function initEdit() {
   }));
   $("#eUndo").onclick = undoMask;
   $("#eClearMask").onclick = () => { pushUndo(); const c = $("#eMask"); c.getContext("2d").clearRect(0, 0, c.width, c.height); updateEditInfo(); };
-  $("#eShowMask").onchange = () => ($("#eMask").style.opacity = $("#eShowMask").checked ? 1 : 0);
+  $("#eShowMask").onchange = () => ($("#eMask").style.opacity = $("#eShowMask").checked ? "" : 0);
   $("#eClear").onclick = () => ed.board.clear();
   ["eN", "eTier", "eQuality"].forEach((id) => ($("#" + id).oninput = refreshEditEstimate));
   $("#eGo").onclick = runEdit;
@@ -57,8 +57,7 @@ function loadEditFile(file) {
     ed.undo = [];
     $("#eEmpty").hidden = true;
     $("#eEditor").hidden = false;
-    $("#eCanvasWrap").style.maxWidth = Math.min(img.naturalWidth, 760) + "px";
-    $("#eCanvasWrap").style.width = Math.min(img.naturalWidth, 760) + "px";
+    $("#eCanvasWrap").style.width = `min(${Math.min(img.naturalWidth, 760)}px, 100%)`;
     $("#eDrop").querySelector("b").textContent = `✓ ${file.name}`;
     updateEditInfo();
     refreshEditEstimate();
@@ -75,9 +74,11 @@ function setupMaskDrawing() {
   };
   const stroke = (x, y) => {
     const ctx = c.getContext("2d");
-    const size = $("#eBrush").value * (c.width / c.getBoundingClientRect().width);
+    const scale = c.width / c.getBoundingClientRect().width;
+    // 지우개는 브러시보다 살짝 크게 — 가장자리 안티앨리어싱 잔상이 남지 않도록
+    const size = $("#eBrush").value * scale * (ed.tool === "erase" ? 1.12 : 1) + (ed.tool === "erase" ? 3 : 0);
     ctx.globalCompositeOperation = ed.tool === "erase" ? "destination-out" : "source-over";
-    ctx.fillStyle = "rgba(255, 60, 60, 0.5)";
+    ctx.fillStyle = "rgb(255, 60, 60)";
     ctx.beginPath();
     ctx.arc(x, y, size / 2, 0, Math.PI * 2);
     ctx.fill();
@@ -116,7 +117,8 @@ function undoMask() {
 function maskHasPaint() {
   const c = $("#eMask");
   const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
-  for (let i = 3; i < d.length; i += 4) if (d[i] > 24) return true;
+  let n = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 24 && ++n >= 30) return true;
   return false;
 }
 function updateEditInfo() {
