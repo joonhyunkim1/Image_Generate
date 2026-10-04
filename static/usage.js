@@ -34,10 +34,12 @@ async function renderUsage() {
       </tbody></table></div>
     </div>
 
-    <div class="card">
-      <div class="step-head"><h3>🏦 공식 청구·잔액 확인</h3><button class="btn sm" id="officialBtn">조회</button></div>
-      <p class="sub">앱 기록과 별개로 제공사에서 직접 가져온 금액입니다. 조회 버튼을 누르면 각 제공사에 키로 요청합니다(과금 없음).</p>
-      <div id="officialBox" class="hint">조회 버튼을 눌러주세요.</div>
+    <div class="card" id="billingCard">
+      <div class="step-head"><h3>💳 청구 금액 요약 (제공사별 · 합산)</h3>
+        <div class="row"><input type="month" id="billMonth" value="${new Date().toISOString().slice(0, 7)}" style="width:auto;margin:0" /><button class="btn sm" id="billBtn">조회</button></div></div>
+      <p class="sub">제공사마다 확인할 수 있는 금액의 종류가 달라서, <b>가장 믿을 만한 금액</b>을 골라 합산하고 기준을 배지로 표시합니다.
+        우선순위는 <b>직접 입력 &gt; 공식 조회 &gt; 앱 기록(API 응답 실측 &gt; 표 단가 추정)</b>입니다.</p>
+      <div id="billingBox" class="hint"><span class="spinner"></span>조회 중...</div>
     </div>
 
     <div class="card">
@@ -73,27 +75,69 @@ async function renderUsage() {
           <td>${{ actual: "실측", estimate: "추정", demo: "데모" }[r.basis] || r.basis}</td></tr>`).join("") || `<tr><td colspan="6" class="hint">기록이 없습니다.</td></tr>`}
       </tbody></table></div>
     </div>`;
-  $("#officialBtn").onclick = loadOfficial;
+  $("#billBtn").onclick = () => loadBilling();
+  $("#billMonth").onchange = () => loadBilling();
+  loadBilling();
 }
 
-async function loadOfficial() {
-  const out = $("#officialBox");
-  out.innerHTML = `<span class="spinner"></span>조회 중...`;
-  const o = await api("/api/usage/official");
-  const parts = [];
-  const oa = o.openai;
-  if (!oa.available) parts.push(`<p><b>OpenAI</b> — Admin 키가 없어 공식 청구 금액을 조회할 수 없습니다. <a href="#" data-go="setup">초기 설정</a>에서 선택 입력하거나, <a href="https://platform.openai.com/settings/organization/usage" target="_blank" rel="noopener">OpenAI Usage 페이지</a>에서 확인하세요.</p>`);
-  else if (oa.error) parts.push(`<p><b>OpenAI</b> — <span class="err">${esc(oa.error)}</span></p>`);
-  else parts.push(`<p><b>OpenAI</b> 이번 달(UTC) — 조직 전체 <b>${fmtUsd(oa.org_month_usd)}</b>${oa.key_found
-    ? ` · 이 앱의 키(${esc(oa.key_name)} / ${esc(oa.key_project)}) <b>${fmtUsd(oa.key_month_usd)}</b>` : ` · 이 앱의 키를 찾지 못해 조직 전체 금액만 표시`}
-    <span class="hint-i">(하루 단위, 수 시간 지연될 수 있음)</span>${oa.key_error ? `<br/><span class="err">${esc(oa.key_error)}</span>` : ""}</p>`);
-  const b = o.bfl;
-  if (!b.available) parts.push(`<p><b>BFL</b> — 키가 설정되지 않았습니다.</p>`);
-  else if (b.error) parts.push(`<p><b>BFL</b> — <span class="err">${esc(b.error)}</span></p>`);
-  else parts.push(`<p><b>BFL</b> 남은 크레딧 <b>${b.credits}</b> (≈ ${fmtUsd(b.usd)}, 1 credit = $0.01)</p>`);
-  parts.push(o.gemini.available
-    ? `<p><b>Google</b> — API 키로는 사용량을 조회할 수 없습니다. <a href="${o.gemini.url}" target="_blank" rel="noopener">AI Studio 사용량 페이지</a>에서 확인하세요. (앱 기록은 표 단가 추정치)</p>`
-    : `<p><b>Google</b> — 키가 설정되지 않았습니다.</p>`);
-  out.innerHTML = parts.join("");
-  $$("[data-go]", out).forEach((a) => (a.onclick = (e) => { e.preventDefault(); switchView(a.dataset.go); }));
+const BASIS = {
+  manual: ["직접 입력", "acc", "청구 화면에서 확인해 직접 입력한 금액"],
+  official: ["공식 조회", "ok", "제공사 API로 조회한 청구 금액 (이 앱의 키 기준)"],
+  actual: ["API 응답 실측", "ok", "이 앱이 보낸 요청의 응답(토큰/credit)으로 계산한 금액 — 이 앱 밖에서 쓴 금액은 포함되지 않음"],
+  estimate: ["앱 추정", "warn", "표 단가로 추정한 금액 — 실제 청구와 다를 수 있음"],
+  none: ["기록 없음", "", ""],
+};
+const PNAME = { openai: "OpenAI", gemini: "Google (Gemini)", bfl: "Black Forest Labs" };
+
+async function loadBilling() {
+  const box = $("#billingBox");
+  const month = $("#billMonth").value || new Date().toISOString().slice(0, 7);
+  box.innerHTML = `<span class="spinner"></span>조회 중... (OpenAI·BFL에 직접 요청하므로 몇 초 걸릴 수 있어요)`;
+  let d;
+  try { d = await api(`/api/usage/billing?month=${encodeURIComponent(month)}`); } catch (e) { box.innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  const both = (v) => `${fmtUsd(v)} <span class="hint-i">(${fmtKrw(v)})</span>`;
+  const oa = d.openai, bfl = d.bfl;
+  const officialCell = (r) => {
+    if (r.provider === "openai") {
+      if (!oa.available) return `<span class="hint-i">Admin 키 없음</span>`;
+      if (oa.error) return `<span class="err" style="display:inline-block">${esc(oa.error)}</span>`;
+      return r.official_usd !== null ? both(r.official_usd) : `<span class="hint-i">키 매칭 실패</span>`;
+    }
+    if (r.provider === "bfl") {
+      if (!bfl.available) return `<span class="hint-i">키 없음</span>`;
+      if (bfl.error) return `<span class="hint-i">${esc(bfl.error)}</span>`;
+      return `<span class="hint-i">지출 조회 API 없음 · 남은 잔액 ${bfl.credits} credit (≈ ${fmtUsd(bfl.usd)})</span>`;
+    }
+    return `<span class="hint-i">지출 조회 API 없음</span>`;
+  };
+  box.innerHTML = `
+    <div class="table-wrap"><table class="table" id="billTable"><thead><tr>
+      <th>제공사</th><th class="num">앱 기록</th><th>공식·제공사 조회</th><th class="num">합산에 쓴 금액</th><th>기준</th><th>직접 입력 (USD)</th></tr></thead><tbody>
+      ${d.rows.map((r) => {
+        const [lbl, cls, tip] = BASIS[r.basis];
+        return `<tr data-p="${r.provider}">
+          <td><b>${PNAME[r.provider]}</b>${r.key_set ? "" : ` <span class="badge">키 없음</span>`}</td>
+          <td class="num">${both(r.app_usd)}<div class="hint-i">${r.images}장 · ${r.calls}회</div></td>
+          <td class="wrap">${officialCell(r)}${r.note ? `<div class="hint-i" style="color:var(--warn)">${esc(r.note)}</div>` : ""}</td>
+          <td class="num"><b>${both(r.usd)}</b></td>
+          <td>${lbl && r.basis !== "none" ? `<span class="badge ${cls}" title="${esc(tip)}">${lbl}</span>` : `<span class="hint-i">기록 없음</span>`}</td>
+          <td><div class="row" style="flex-wrap:nowrap"><input type="number" min="0" max="1000000" step="0.01" placeholder="예) 12.34" value="${r.manual_usd ?? ""}" style="width:92px;margin:0" data-manual="${r.provider}" />
+            <button class="btn sm" data-save="${r.provider}">저장</button></div></td></tr>`;
+      }).join("")}
+      <tr style="font-weight:700"><td>합산 (${esc(d.month)})</td><td class="num">${both(d.total_app_usd)}</td><td></td><td class="num">${both(d.total_usd)}</td>
+        <td>${d.basis_mixed ? `<span class="badge warn" title="제공사마다 금액의 기준이 달라 섞여 있습니다">혼합 기준</span>` : ""}</td><td></td></tr>
+    </tbody></table></div>
+    <ul class="hint" style="padding-left:18px;margin-top:10px">
+      <li><b>OpenAI</b>: Admin 키가 있으면 공식 청구 금액을 가져옵니다(${oa.available && !oa.error ? `조직 전체 ${fmtUsd(oa.org_month_usd)}${oa.key_found ? ` · 이 앱의 키 ${fmtUsd(oa.key_month_usd)}` : ""}` : "미설정 또는 오류"}). 하루 단위·UTC 기준이라 수 시간 지연되며, 월 경계는 앱 기록(내 PC 시간)과 조금 다를 수 있습니다.</li>
+      <li><b>Black Forest Labs</b>: 지출 금액을 알려주는 API가 없습니다. 이 앱이 받은 응답의 credit(1 credit = $0.01)이 정확한 금액이라 <b>이 앱으로 쓴 금액은 실측</b>입니다. 전체 지출은 <a href="https://dashboard.bfl.ai" target="_blank" rel="noopener">dashboard.bfl.ai</a>에서 확인해 직접 입력하세요.</li>
+      <li><b>Google</b>: API 키로는 사용 금액을 조회할 수 없습니다. <a href="${d.gemini.url}" target="_blank" rel="noopener">AI Studio 사용량</a> 또는 Google Cloud 결제 화면에서 확인한 금액을 직접 입력하면 합산에 반영됩니다. 입력하지 않으면 표 단가 추정치를 씁니다.</li>
+      <li>직접 입력한 값은 해당 월의 그 제공사 금액으로 <b>우선 적용</b>됩니다. 칸을 비우고 저장하면 삭제됩니다. 이 PC의 앱 데이터에만 저장됩니다.</li>
+    </ul>`;
+  $$("[data-save]", box).forEach((b) => (b.onclick = async () => {
+    const p = b.dataset.save, v = $(`[data-manual=${p}]`, box).value.trim();
+    if (v !== "" && !(parseFloat(v) >= 0 && parseFloat(v) <= 1e6)) return toast("금액은 0 ~ 1,000,000 USD 범위로 입력하세요.");
+    await api("/api/usage/manual", { method: "PUT", json: { provider: p, month: d.month, usd: v === "" ? null : parseFloat(v) } });
+    toast(v === "" ? "직접 입력 값을 삭제했습니다." : "저장했습니다.");
+    loadBilling();
+  }));
 }

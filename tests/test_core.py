@@ -172,6 +172,80 @@ class BflKeyCheckTests(unittest.TestCase):
         self.assertFalse(r["ok"]); self.assertIn("서버가 오류", r["error"])
 
 
+class BillingTests(unittest.TestCase):
+    """제공사별 청구 금액 선택/합산 규칙 (메모리 DB + mock)."""
+    MONTH = "2026-10"
+
+    def setUp(self):
+        import sqlite3
+        from app import db, usage
+        self.db, self.usage = db, usage
+        self._old_conn = db._conn
+        db._conn = sqlite3.connect(":memory:", check_same_thread=False)
+        db._conn.row_factory = sqlite3.Row
+        db._conn.executescript(db.SCHEMA)
+        self._old = (usage.official_openai, usage.bfl_balance)
+        usage.official_openai = lambda month=None: {"available": False}
+        usage.bfl_balance = lambda: {"available": False}
+        ins = lambda prov, model, cost, basis: db.execute(  # noqa: E731
+            "INSERT INTO usage(ts, provider, model, purpose, images, cost_usd, basis) VALUES(?,?,?,?,?,?,?)",
+            (f"{self.MONTH}-05T10:00:00", prov, model, "generate", 2, cost, basis))
+        ins("openai", "gpt-image-2.5-flare", 3.0, "actual")
+        ins("gemini", "nano-banana-2", 1.0, "estimate")
+        ins("bfl", "flux-2-pro", 0.5, "actual")
+        ins("bfl", "flux-2-pro", 9.9, "actual")  # 다른 달 기록은 제외되어야 함
+        db.execute("UPDATE usage SET ts='2026-09-05T10:00:00' WHERE cost_usd=9.9")
+
+    def tearDown(self):
+        self.db._conn = self._old_conn
+        self.usage.official_openai, self.usage.bfl_balance = self._old
+
+    def rows(self, **kw):
+        b = self.usage.billing(self.MONTH)
+        return b, {r["provider"]: r for r in b["rows"]}
+
+    def test_app_records_and_total(self):
+        b, r = self.rows()
+        self.assertEqual((r["openai"]["basis"], r["gemini"]["basis"], r["bfl"]["basis"]), ("actual", "estimate", "actual"))
+        self.assertAlmostEqual(r["bfl"]["usd"], 0.5)           # 9월 기록(9.9)은 제외
+        self.assertAlmostEqual(b["total_usd"], 4.5)
+        self.assertTrue(b["basis_mixed"])
+
+    def test_manual_overrides_and_delete(self):
+        self.usage.set_manual("gemini", self.MONTH, 2.25)
+        b, r = self.rows()
+        self.assertEqual((r["gemini"]["basis"], r["gemini"]["usd"], r["gemini"]["app_usd"]), ("manual", 2.25, 1.0))
+        self.assertAlmostEqual(b["total_usd"], 3.0 + 2.25 + 0.5)
+        self.usage.set_manual("gemini", self.MONTH, 3.0); self.assertAlmostEqual(self.rows()[0]["total_usd"], 6.5)  # 덮어쓰기
+        self.usage.set_manual("gemini", self.MONTH, None)
+        self.assertEqual(self.rows()[1]["gemini"]["basis"], "estimate")
+
+    def test_openai_official_used_when_key_found(self):
+        self.usage.official_openai = lambda month=None: {"available": True, "key_found": True, "key_month_usd": 2.5, "org_month_usd": 9.0}
+        b, r = self.rows()
+        self.assertEqual((r["openai"]["basis"], r["openai"]["usd"]), ("official", 2.5))
+        self.assertAlmostEqual(b["total_usd"], 2.5 + 1.0 + 0.5)
+
+    def test_openai_official_not_used_when_key_unmatched(self):
+        self.usage.official_openai = lambda month=None: {"available": True, "key_found": False, "org_month_usd": 9.0}
+        _, r = self.rows()
+        self.assertEqual((r["openai"]["basis"], r["openai"]["usd"]), ("actual", 3.0))   # 조직 전체 금액으로 합산하지 않음
+        self.assertTrue(r["openai"]["note"])
+
+    def test_openai_official_error_falls_back(self):
+        self.usage.official_openai = lambda month=None: {"available": True, "error": "HTTP 403"}
+        self.assertEqual(self.rows()[1]["openai"]["basis"], "actual")
+
+    def test_month_validation_and_bounds(self):
+        v = self.usage.VALID_MONTH
+        for ok in ("2026-01", "2026-12"):
+            self.assertTrue(v.match(ok))
+        for bad in ("2026-13", "2026-00", "26-10", "2026-1", "2026-10-01", ""):
+            self.assertFalse(v.match(bad), bad)
+        s, e = self.usage.month_bounds_utc("2026-12")
+        self.assertEqual((e.year, e.month), (2027, 1))
+
+
 class PricingTests(unittest.TestCase):
     def test_estimates(self):
         m = models.get("gpt-image-2.5-flare")

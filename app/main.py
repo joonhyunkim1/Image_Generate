@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -506,6 +506,31 @@ def get_usage():
     return usage.summary()
 
 
-@app.get("/api/usage/official")
-async def get_usage_official():
-    return await asyncio.to_thread(usage.official)
+def _month_or_400(month: str | None) -> str:
+    month = month or date.today().strftime("%Y-%m")
+    if not usage.VALID_MONTH.match(month):
+        raise HTTPException(400, "월은 YYYY-MM 형식으로 입력하세요. (예: 2026-10)")
+    return month
+
+
+@app.get("/api/usage/billing")
+async def get_billing(month: str | None = None):
+    """제공사별 청구 금액 + 합산 (OpenAI 공식 조회, BFL 잔액, 직접 입력, 앱 기록)."""
+    return await asyncio.to_thread(usage.billing, _month_or_400(month))
+
+
+class ManualIn(BaseModel):
+    provider: str
+    month: str
+    usd: float | None = None   # None이면 삭제
+
+
+@app.put("/api/usage/manual")
+def put_manual(body: ManualIn):
+    if body.provider not in usage.PROVIDERS:
+        raise HTTPException(400, "알 수 없는 제공사입니다.")
+    month = _month_or_400(body.month)
+    if body.usd is not None and not (0 <= body.usd <= 1_000_000):
+        raise HTTPException(400, "금액은 0 ~ 1,000,000 USD 범위로 입력하세요.")
+    usage.set_manual(body.provider, month, body.usd)
+    return {"ok": True}

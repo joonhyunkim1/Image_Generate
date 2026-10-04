@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS saved_images (
   cost_usd REAL NOT NULL DEFAULT 0,
   meta TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS manual_billing (   -- 제공사 청구 화면에서 확인한 금액을 사용자가 직접 입력
+  provider TEXT NOT NULL,
+  month TEXT NOT NULL,                        -- YYYY-MM
+  usd REAL NOT NULL,
+  ts TEXT NOT NULL,
+  PRIMARY KEY (provider, month)
+);
 """
 
 

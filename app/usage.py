@@ -8,6 +8,7 @@
 """
 import hashlib
 import re
+import calendar
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
@@ -115,11 +116,19 @@ def _find_app_key() -> dict | None:
     return found
 
 
-def official_openai() -> dict:
+def month_bounds_utc(month: str) -> tuple[datetime, datetime]:
+    y, m = int(month[:4]), int(month[5:7])
+    start = datetime(y, m, 1, tzinfo=timezone.utc)
+    end = datetime(y + (m == 12), 1 if m == 12 else m + 1, 1, tzinfo=timezone.utc)
+    return start, end
+
+
+def official_openai(month: str | None = None) -> dict:
     if not settings.openai_admin_key:
         return {"available": False}
-    start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    params = {"start_time": int(start.timestamp()), "bucket_width": "1d", "limit": 31, "group_by": ["api_key_id"]}
+    start, end = month_bounds_utc(month or date.today().strftime("%Y-%m"))
+    params = {"start_time": int(start.timestamp()), "end_time": int(end.timestamp()), "bucket_width": "1d", "limit": 31,
+              "group_by": ["api_key_id"]}
     key_error = None
     try:
         app_key = _find_app_key() if settings.key_ok("openai") else None
@@ -173,6 +182,63 @@ def bfl_balance() -> dict:
         return {"available": True, "error": f"잔액 조회 실패: {e}"}
 
 
-def official() -> dict:
-    return {"openai": official_openai(), "bfl": bfl_balance(),
-            "gemini": {"available": settings.key_ok("gemini"), "url": "https://aistudio.google.com/usage"}}
+VALID_MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+PROVIDERS = ("openai", "gemini", "bfl")
+
+
+def set_manual(provider: str, month: str, usd: float | None):
+    """제공사 청구 화면에서 확인한 금액을 직접 입력/삭제(None)."""
+    if usd is None:
+        db.execute("DELETE FROM manual_billing WHERE provider=? AND month=?", (provider, month))
+    else:
+        db.execute("INSERT INTO manual_billing(provider, month, usd, ts) VALUES(?,?,?,?)"
+                   " ON CONFLICT(provider, month) DO UPDATE SET usd=excluded.usd, ts=excluded.ts",
+                   (provider, month, round(usd, 6), datetime.now().isoformat(timespec="seconds")))
+
+
+def billing(month: str) -> dict:
+    """제공사별 청구 금액과 합산. 제공사마다 쓸 수 있는 가장 믿을 만한 금액을 고르고 그 기준(basis)을 함께 돌려준다.
+
+    우선순위: 직접 입력(manual) > 공식 조회(official, OpenAI Admin 키) > 앱 기록(API 응답 실측 actual / 표 단가 추정 estimate)
+    """
+    app = {r["provider"]: r for r in db.rows(
+        "SELECT provider, COUNT(*) AS calls, SUM(images) AS images, SUM(cost_usd) AS cost,"
+        " SUM(CASE WHEN basis='actual' THEN cost_usd ELSE 0 END) AS actual_cost,"
+        " SUM(CASE WHEN basis='demo' THEN 1 ELSE 0 END) AS demo_calls"
+        " FROM usage WHERE ts LIKE ? GROUP BY provider", (f"{month}%",))}
+    manual = {r["provider"]: r for r in db.rows("SELECT provider, usd, ts FROM manual_billing WHERE month=?", (month,))}
+    oa = official_openai(month)
+    bfl = bfl_balance()
+    rows = []
+    for p in PROVIDERS:
+        a = app.get(p) or {}
+        app_usd = round(a.get("cost") or 0, 6)
+        actual = round(a.get("actual_cost") or 0, 6)
+        row = {"provider": p, "images": a.get("images") or 0, "calls": a.get("calls") or 0, "app_usd": app_usd,
+               "manual_usd": manual[p]["usd"] if p in manual else None, "key_set": settings.key_ok(p), "note": None}
+        official_usd = None
+        if p == "openai" and oa.get("available") and not oa.get("error"):
+            if oa.get("key_found"):
+                official_usd = oa["key_month_usd"]
+            else:
+                row["note"] = "이 앱의 키를 조직에서 찾지 못해 공식 금액을 합산에 쓰지 못했습니다(조직 전체 금액은 참고용)."
+        row["official_usd"] = official_usd
+        if row["manual_usd"] is not None:
+            row.update(usd=row["manual_usd"], basis="manual")
+        elif official_usd is not None:
+            row.update(usd=official_usd, basis="official")
+        elif app_usd > 0 and actual >= app_usd - 1e-9:
+            row.update(usd=app_usd, basis="actual")
+        elif app_usd > 0:
+            row.update(usd=app_usd, basis="estimate")
+        else:
+            row.update(usd=0.0, basis="none")
+        rows.append(row)
+    return {
+        "month": month, "usd_krw": settings.usd_krw, "rows": rows,
+        "total_usd": round(sum(r["usd"] for r in rows), 6),
+        "total_app_usd": round(sum(r["app_usd"] for r in rows), 6),
+        "basis_mixed": len({r["basis"] for r in rows if r["basis"] != "none"}) > 1,
+        "openai": oa, "bfl": bfl,
+        "gemini": {"available": settings.key_ok("gemini"), "url": "https://aistudio.google.com/usage"},
+    }
