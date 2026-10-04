@@ -1,0 +1,10 @@
+# 비밀 키 / 로컬 데이터 (절대 올리지 않기)
+.env
+.venv/
+data/
+saved_images/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+.claude/

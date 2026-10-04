@@ -1,0 +1,5 @@
+# Mac/Windows 모두에서 실행되도록 줄바꿈을 고정
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf
+*.py text eol=lf

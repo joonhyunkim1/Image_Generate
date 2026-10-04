@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UV프린트 이미지 생성기</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="app">
+  <nav class="nav">
+    <div class="brand">UV<br/>이미지<br/>생성기</div>
+    <button class="nav-btn" data-view="tutorial"><span class="ico">📘</span>튜토리얼</button>
+    <button class="nav-btn" data-view="setup"><span class="ico">⚙️</span>초기 설정<span class="dot" id="setupDot" hidden></span></button>
+    <div class="nav-sep"></div>
+    <button class="nav-btn active" data-view="generate"><span class="ico">🎨</span>이미지 생성</button>
+    <button class="nav-btn" data-view="edit"><span class="ico">✏️</span>이미지 수정</button>
+    <button class="nav-btn" data-view="gallery"><span class="ico">🖼</span>저장한 이미지</button>
+    <button class="nav-btn" data-view="usage"><span class="ico">💰</span>가격·사용량</button>
+    <div class="nav-foot">
+      <div class="cost-pill" id="costPill" title="이 앱에서 사용한 비용(실측/추정)">오늘 $0<br/>이번 달 $0</div>
+      <div class="demo-pill" id="demoPill" hidden>데모 모드<br/>(API 미호출)</div>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="banner" id="keyBanner" hidden>
+      <b>API 키가 하나도 설정되지 않았습니다.</b> 이미지를 만들려면 최소 한 곳의 키가 필요합니다.
+      <button class="btn sm" id="bannerSetup">초기 설정 열기 →</button>
+    </div>
+
+    <!-- 튜토리얼 -->
+    <section class="view" id="view-tutorial" hidden><div class="content-pane wide" id="tutorialContent"></div></section>
+    <!-- 초기 설정 -->
+    <section class="view" id="view-setup" hidden><div class="content-pane wide" id="setupContent"></div></section>
+
+    <!-- 이미지 생성 -->
+    <section class="view" id="view-generate">
+      <aside class="side-pane left" id="genSide">
+        <h3>프롬프트</h3>
+        <textarea id="gPrompt" rows="6" placeholder="만들고 싶은 이미지를 설명하세요. (예: 파스텔톤 고양이 스티커, 굵은 외곽선, 투명 배경)&#10;프롬프트 작성이 어렵다면 튜토리얼의 '프롬프트 가이드'를 참고하세요."></textarea>
+        <div class="chips" id="gExamples"></div>
+
+        <h3>모델 선택 <span class="hint-i">복수 선택하면 같은 프롬프트로 비교할 수 있어요</span></h3>
+        <div id="gModels" class="mlist"></div>
+
+        <h3>생성 옵션</h3>
+        <label>모델별 생성 장수<input id="gN" type="number" min="1" max="10" value="1" /></label>
+        <div class="seg" id="gMode">
+          <button class="active" data-mode="ratio">비율 + 해상도</button>
+          <button data-mode="print">인쇄 크기 (UV)</button>
+        </div>
+        <div id="gRatioBox">
+          <div class="chips pick" id="gAspect"></div>
+          <label>해상도 단계
+            <select id="gTier"><option value="1K">1K (긴 변 ≈ 1024px)</option><option value="2K">2K (≈ 2048px)</option><option value="4K">4K (≈ 3840px, 모델별 상한 적용)</option></select>
+          </label>
+        </div>
+        <div id="gPrintBox" hidden>
+          <div class="range-row">
+            <label>가로(mm)<input id="gW" type="number" min="5" max="2000" step="1" value="100" /></label>
+            <span class="range-sep">×</span>
+            <label>세로(mm)<input id="gH" type="number" min="5" max="2000" step="1" value="100" /></label>
+          </div>
+          <label>목표 DPI<select id="gDpi"><option>150</option><option selected>300</option><option>600</option></select></label>
+          <div class="hint" id="gPrintInfo"></div>
+        </div>
+        <label id="gQualityBox">품질 <span class="hint-i">GPT Image 계열에만 적용</span>
+          <select id="gQuality"></select>
+        </label>
+        <label class="check"><input type="checkbox" id="gTransparent" /> 투명 배경 PNG <span class="hint-i" id="gTransHint"></span></label>
+        <label class="check"><input type="checkbox" id="gCrop" checked /> 정확한 비율로 자동 자르기 <span class="hint-i">모델 출력이 살짝 다를 때</span></label>
+
+        <div class="estimate-box" id="gEstimate"></div>
+        <button class="btn primary block" id="gGo">🎨 이미지 생성</button>
+      </aside>
+
+      <div class="content-pane" id="gResultsPane">
+        <div class="pane-title">
+          <h2>생성 결과</h2>
+          <div class="row">
+            <button class="btn sm ghost" id="gClear">결과 비우기</button>
+          </div>
+        </div>
+        <div class="empty-state" id="gEmpty">
+          <h3>왼쪽에서 프롬프트와 모델을 고르고 생성하세요</h3>
+          <p>모델을 여러 개 선택하면 모델별로 나란히 보여줘서 비교할 수 있습니다.<br/>마음에 드는 이미지는 <b>💾 저장</b>을 눌러 보관하세요. 저장하지 않은 후보는 3일 후 자동 삭제됩니다.</p>
+        </div>
+        <div id="gBoard"></div>
+      </div>
+    </section>
+
+    <!-- 이미지 수정 -->
+    <section class="view" id="view-edit" hidden>
+      <aside class="side-pane left" id="editSide">
+        <h3>1. 수정할 이미지</h3>
+        <label class="drop" id="eDrop">
+          <input type="file" id="eFile" accept="image/png,image/jpeg,image/webp" hidden />
+          <div><b>이미지를 끌어다 놓거나 클릭</b></div>
+          <div class="sub">PNG · JPG · WEBP</div>
+        </label>
+        <h3>2. 수정 내용</h3>
+        <textarea id="ePrompt" rows="5" placeholder="어떻게 바꿀지 적어주세요. (예: 칠한 부분의 셔츠를 빨간색 후드티로 바꿔줘, 나머지는 그대로)"></textarea>
+        <h3>3. 모델 선택</h3>
+        <div id="eModels" class="mlist"></div>
+        <h3>4. 옵션</h3>
+        <label>모델별 생성 장수<input id="eN" type="number" min="1" max="10" value="1" /></label>
+        <label>출력 해상도
+          <select id="eTier"><option value="orig">원본과 같은 크기 (최대 2048px)</option><option value="1K">1K</option><option value="2K">2K</option><option value="4K">4K</option></select>
+        </label>
+        <label id="eQualityBox">품질 <span class="hint-i">GPT Image 계열에만 적용</span><select id="eQuality"></select></label>
+        <label class="check"><input type="checkbox" id="eTransparent" /> 투명 배경 PNG <span class="hint-i" id="eTransHint"></span></label>
+        <label class="check"><input type="checkbox" id="eKeep" checked /> 칠한 영역 밖은 원본 그대로 유지</label>
+        <label>참고 이미지 추가 <span class="hint-i">(선택) 스타일·소품 참고용</span>
+          <input type="file" id="eRefs" accept="image/png,image/jpeg,image/webp" multiple />
+        </label>
+        <div class="thumbs" id="eRefThumbs"></div>
+        <div class="estimate-box" id="eEstimate"></div>
+        <button class="btn primary block" id="eGo">✏️ 이미지 수정</button>
+      </aside>
+
+      <div class="content-pane" id="eMain">
+        <div class="pane-title"><h2>이미지 수정</h2></div>
+        <div class="empty-state" id="eEmpty">
+          <h3>수정할 이미지를 먼저 첨부하세요</h3>
+          <p>첨부한 뒤 <b>브러시로 바꾸고 싶은 부분을 칠하고</b> 프롬프트를 입력하세요.<br/>칠하지 않으면 이미지 전체를 프롬프트대로 수정합니다.</p>
+        </div>
+        <div id="eEditor" hidden>
+          <div class="toolbar">
+            <div class="seg" id="eTool"><button class="active" data-tool="brush">🖌 브러시</button><button data-tool="erase">🧽 지우개</button></div>
+            <label class="inline">크기 <input type="range" id="eBrush" min="4" max="120" value="40" /></label>
+            <button class="btn sm" id="eUndo">↶ 되돌리기</button>
+            <button class="btn sm" id="eClearMask">마스크 비우기</button>
+            <label class="check inline"><input type="checkbox" id="eShowMask" checked /> 마스크 표시</label>
+            <span class="sub" id="eInfo"></span>
+          </div>
+          <div class="canvas-wrap checker" id="eCanvasWrap">
+            <canvas id="eBase"></canvas>
+            <canvas id="eMask"></canvas>
+          </div>
+        </div>
+        <div class="pane-title" style="margin-top:22px"><h2>수정 결과</h2><button class="btn sm ghost" id="eClear">결과 비우기</button></div>
+        <div id="eBoard"></div>
+      </div>
+    </section>
+
+    <!-- 저장한 이미지 -->
+    <section class="view" id="view-gallery" hidden><div class="content-pane wide" id="galleryContent"></div></section>
+    <!-- 가격·사용량 -->
+    <section class="view" id="view-usage" hidden><div class="content-pane wide" id="usageContent"></div></section>
+  </main>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-box">
+    <div class="modal-head"><h3 id="modalTitle"></h3><button class="btn ghost sm" id="modalClose">닫기</button></div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="/static/common.js"></script>
+<script src="/static/tutorial.js"></script>
+<script src="/static/setup.js"></script>
+<script src="/static/generate.js"></script>
+<script src="/static/edit.js"></script>
+<script src="/static/gallery.js"></script>
+<script src="/static/usage.js"></script>
+<script src="/static/boot.js"></script>
+</body>
+</html>
