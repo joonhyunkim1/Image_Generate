@@ -136,6 +136,42 @@ class KeyFormatTests(unittest.TestCase):
         self.assertTrue(is_valid_bfl_key("0123456789abcdef0123456789abcdef"))
 
 
+class BflKeyCheckTests(unittest.TestCase):
+    """BFL 잔액 조회가 500이어도 키 오류와 구분해서 처리하는지 (mock)."""
+    def run_check(self, credits_status, post_status, credits_body=None):
+        from app import setup
+        calls = []
+        real_get, real_post, real_sleep = setup.httpx.get, setup.httpx.post, setup.time.sleep
+        setup.httpx.get = lambda url, **kw: (calls.append(("GET", url)), httpx.Response(credits_status, json=credits_body or {"detail": "x"}))[1]
+        setup.httpx.post = lambda url, **kw: (calls.append(("POST", url)), httpx.Response(post_status, json={"detail": "x"}))[1]
+        setup.time.sleep = lambda s: None
+        try:
+            return setup.check_bfl_key("k" * 32), calls
+        finally:
+            setup.httpx.get, setup.httpx.post, setup.time.sleep = real_get, real_post, real_sleep
+
+    def test_ok(self):
+        r, calls = self.run_check(200, 422, {"credits": 12.5})
+        self.assertTrue(r["ok"]); self.assertEqual(r["credits"], 12.5); self.assertEqual(len(calls), 1)
+
+    def test_invalid_key(self):
+        r, calls = self.run_check(403, 403)
+        self.assertFalse(r["ok"]); self.assertIn("유효하지 않은", r["error"]); self.assertEqual(len(calls), 1)
+
+    def test_credits_500_but_auth_ok(self):
+        r, calls = self.run_check(500, 422)
+        self.assertTrue(r["ok"]); self.assertIn("500", r["warning"])
+        self.assertEqual([c[0] for c in calls], ["GET", "GET", "POST"])  # 재시도 1회 후 인증 확인
+
+    def test_credits_500_and_key_invalid(self):
+        r, _ = self.run_check(500, 403)
+        self.assertFalse(r["ok"]); self.assertIn("유효하지 않은", r["error"])
+
+    def test_total_outage(self):
+        r, _ = self.run_check(500, 500)
+        self.assertFalse(r["ok"]); self.assertIn("서버가 오류", r["error"])
+
+
 class PricingTests(unittest.TestCase):
     def test_estimates(self):
         m = models.get("gpt-image-2.5-flare")

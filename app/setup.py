@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 
 import httpx
 
@@ -179,13 +180,40 @@ def test_key(provider: str, key: str | None) -> dict:
                 return {"ok": False, "error": f"HTTP {r.status_code}: {_msg(r)[:160]}"}
             names = {m["name"].split("/")[-1] for m in r.json().get("models", [])}
             return {"ok": True, "models": {"nano-banana-2": "gemini-3.1-flash-image" in names}}
-        r = httpx.get("https://api.bfl.ai/v1/credits", headers={"x-key": key}, timeout=15)
-        if r.status_code != 200:
-            return {"ok": False, "error": "유효하지 않은 키입니다." if r.status_code in (401, 403) else f"HTTP {r.status_code}: {_msg(r)[:160]}"}
-        credits = r.json().get("credits")
-        return {"ok": True, "credits": credits, "usd": round(float(credits) * 0.01, 2) if credits is not None else None}
+        return check_bfl_key(key)
     except httpx.HTTPError as e:
         return {"ok": False, "error": f"네트워크 오류: {e}"}
+
+
+BFL_API = "https://api.bfl.ai/v1"
+
+
+def check_bfl_key(key: str) -> dict:
+    """BFL 키 확인. 잔액 조회(credits)가 서버 오류(5xx)면 과금 없는 빈 요청으로 인증만 따로 확인한다.
+    (BFL의 생성 엔드포인트는 본문 검증보다 인증을 먼저 검사하므로 빈 본문 → 인증 실패 403 / 통과 시 422)"""
+    headers = {"x-key": key, "accept": "application/json"}
+    last = None
+    for attempt in range(2):
+        r = httpx.get(f"{BFL_API}/credits", headers=headers, timeout=15)
+        if r.status_code == 200:
+            credits = r.json().get("credits")
+            return {"ok": True, "credits": credits, "usd": round(float(credits) * 0.01, 2) if credits is not None else None}
+        if r.status_code in (401, 403):
+            return {"ok": False, "error": "유효하지 않은 키입니다."}
+        last = r
+        if r.status_code < 500:
+            break
+        if attempt == 0:
+            time.sleep(1)
+    p = httpx.post(f"{BFL_API}/flux-2-pro", headers=headers, json={}, timeout=15)
+    if p.status_code in (401, 403):
+        return {"ok": False, "error": "유효하지 않은 키입니다."}
+    if p.status_code in (400, 422):
+        return {"ok": True, "credits": None, "usd": None,
+                "warning": f"키 인증은 통과했지만 잔액 조회(credits)가 BFL 서버 오류(HTTP {last.status_code})로 실패했습니다. "
+                           "BFL 쪽 일시 장애일 수 있습니다. 저장하고 사용해도 되며, 잔액은 dashboard.bfl.ai에서 확인하세요."}
+    return {"ok": False, "error": f"BFL 서버가 오류를 반환했습니다 (잔액 조회 HTTP {last.status_code}, 인증 확인 HTTP {p.status_code}). "
+                                  "키 문제가 아닐 수 있으니 잠시 후 다시 확인하세요."}
 
 
 def test_admin_key(key: str | None) -> dict:

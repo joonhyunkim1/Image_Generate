@@ -162,8 +162,11 @@ def bfl_balance() -> dict:
         return {"available": False}
     try:
         r = httpx.get("https://api.bfl.ai/v1/credits", headers={"x-key": settings.bfl_api_key}, timeout=15)
+        if r.status_code >= 500:  # 한 번 더 시도
+            r = httpx.get("https://api.bfl.ai/v1/credits", headers={"x-key": settings.bfl_api_key}, timeout=15)
         if r.status_code != 200:
-            return {"available": True, "error": f"잔액 조회 실패 (HTTP {r.status_code})"}
+            hint = " (BFL 서버 오류입니다. 잠시 후 다시 시도하거나 dashboard.bfl.ai에서 확인하세요.)" if r.status_code >= 500 else ""
+            return {"available": True, "error": f"잔액 조회 실패 (HTTP {r.status_code}){hint}"}
         credits = float(r.json().get("credits", 0))
         return {"available": True, "credits": credits, "usd": round(credits * 0.01, 4)}
     except (httpx.HTTPError, ValueError) as e:

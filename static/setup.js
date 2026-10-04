@@ -131,7 +131,8 @@ async function testKey(p) {
   let extra = "";
   if (r.models) extra = " · " + Object.entries(r.models).map(([id, ok]) => `${esc(modelById(id)?.label || id)} ${ok ? "✓" : "⚠ 이 키로 사용 불가"}`).join(", ");
   if (r.credits !== undefined && r.credits !== null) extra = ` · 남은 크레딧 ${r.credits} (≈ $${r.usd})`;
-  out.innerHTML = `<span class="badge ok">✓ 유효한 키</span><span class="hint-i">${extra}</span>`;
+  out.innerHTML = `<span class="badge ok">✓ 유효한 키</span><span class="hint-i">${extra}</span>` +
+    (r.warning ? `<div class="note warn" style="margin-top:6px">${esc(r.warning)}</div>` : "");
 }
 
 async function saveSetup() {
