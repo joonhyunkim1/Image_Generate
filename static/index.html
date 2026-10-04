@@ -52,20 +52,34 @@
           <button data-mode="print">인쇄 크기 (UV)</button>
         </div>
         <div id="gRatioBox">
+          <div class="field-title">이미지 비율</div>
           <div class="chips pick" id="gAspect"></div>
-          <label>해상도 단계
-            <select id="gTier"><option value="1K">1K (긴 변 ≈ 1024px)</option><option value="2K">2K (≈ 2048px)</option><option value="4K">4K (≈ 3840px, 모델별 상한 적용)</option></select>
+          <div class="range-row">
+            <label>가로<input id="gAW" type="number" min="0.1" max="100" step="any" value="1" /></label>
+            <span class="range-sep">:</span>
+            <label>세로<input id="gAH" type="number" min="0.1" max="100" step="any" value="1" /></label>
+          </div>
+          <div class="hint tight">직접 입력 범위: 가로·세로 각 <b>0.1 ~ 100</b>, 가로:세로는 <b>1:20 ~ 20:1</b> 이내 (예: 16 : 9, 2.35 : 1).<br/>모델이 지원하지 않는 비율은 가장 가까운 값으로 만든 뒤 정확한 비율로 자릅니다.</div>
+          <label style="margin-top:12px">해상도
+            <select id="gTier"><option value="1K">1K (긴 변 ≈ 1024px)</option><option value="2K">2K (≈ 2048px)</option><option value="4K">4K (≈ 3840px)</option><option value="custom">직접 입력 (px)</option></select>
           </label>
+          <label id="gEdgeBox" hidden>긴 변 픽셀 수<input id="gEdge" type="number" min="256" max="4096" step="1" value="1536" />
+            <span class="hint-i">입력 범위 256 ~ 4096px. 모델 상한(GPT 3840px·약 8.3MP / FLUX 약 4MP)을 넘으면 자동으로 줄입니다.</span></label>
+          <div class="hint tight" id="gTierHint">1K/2K/4K 단계는 모델별 상한(GPT 3840px, FLUX 약 4MP, Nano Banana 2는 4096px)까지만 올라갑니다.</div>
         </div>
         <div id="gPrintBox" hidden>
           <div class="range-row">
-            <label>가로(mm)<input id="gW" type="number" min="5" max="2000" step="1" value="100" /></label>
+            <label>가로(mm)<input id="gW" type="number" min="5" max="2000" step="any" value="100" /></label>
             <span class="range-sep">×</span>
-            <label>세로(mm)<input id="gH" type="number" min="5" max="2000" step="1" value="100" /></label>
+            <label>세로(mm)<input id="gH" type="number" min="5" max="2000" step="any" value="100" /></label>
           </div>
-          <label>목표 DPI<select id="gDpi"><option>150</option><option selected>300</option><option>600</option></select></label>
+          <div class="hint tight">입력 범위: 가로·세로 각 <b>5 ~ 2000mm</b>, 가로:세로는 1:20 ~ 20:1 이내.</div>
+          <label style="margin-top:12px">목표 DPI<input id="gDpi" type="number" min="72" max="1200" step="1" value="300" />
+            <span class="hint-i">입력 범위 72 ~ 1200 (인쇄는 보통 150~300)</span></label>
+          <div class="chips pick" id="gDpiChips"><button data-d="150">150</button><button data-d="300" class="active">300</button><button data-d="600">600</button></div>
           <div class="hint" id="gPrintInfo"></div>
         </div>
+        <div class="err" id="gGeomErr" hidden></div>
         <label id="gQualityBox">품질 <span class="hint-i">GPT Image 계열에만 적용</span>
           <select id="gQuality"></select>
         </label>

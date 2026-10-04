@@ -53,6 +53,40 @@ class SizingTests(unittest.TestCase):
             sizing.request_geometry({"mode": "print", "width_mm": 1, "height_mm": 80})
 
 
+    def test_input_ranges(self):
+        rg = sizing.request_geometry
+        self.assertEqual(rg({"mode": "ratio", "aspect": "2.35:1", "tier": "custom", "long_edge": 1800}), (2.35, 1800.0))
+        bad = [
+            {"mode": "ratio", "aspect": "0:5", "tier": "1K"},            # 가로 0.1 미만
+            {"mode": "ratio", "aspect": "500:1", "tier": "1K"},          # 가로 100 초과
+            {"mode": "ratio", "aspect": "100:1", "tier": "1K"},          # 전체 비율 20:1 초과
+            {"mode": "ratio", "aspect": "a:b", "tier": "1K"},
+            {"mode": "ratio", "aspect": "1:1", "tier": "custom", "long_edge": 255},
+            {"mode": "ratio", "aspect": "1:1", "tier": "custom", "long_edge": 4097},
+            {"mode": "ratio", "aspect": "1:1", "tier": "9K"},
+            {"mode": "print", "width_mm": 4.9, "height_mm": 50, "dpi": 300},
+            {"mode": "print", "width_mm": 2001, "height_mm": 50, "dpi": 300},
+            {"mode": "print", "width_mm": 50, "height_mm": 50, "dpi": 71},
+            {"mode": "print", "width_mm": 50, "height_mm": 50, "dpi": 1201},
+            {"mode": "print", "width_mm": 5, "height_mm": 2000, "dpi": 300},  # 비율 400:1
+        ]
+        for b in bad:
+            with self.assertRaises(ValueError, msg=str(b)):
+                rg(b)
+        # 경계값은 허용
+        rg({"mode": "ratio", "aspect": "0.1:0.1", "tier": "custom", "long_edge": 256})
+        rg({"mode": "ratio", "aspect": "20:1", "tier": "custom", "long_edge": 4096})
+        rg({"mode": "print", "width_mm": 5, "height_mm": 100, "dpi": 72})
+        rg({"mode": "print", "width_mm": 2000, "height_mm": 2000, "dpi": 1200})
+
+    def test_ratio_notes_and_cropped_size(self):
+        self.assertIn("3:1", sizing.resolve(models.get("gpt-image-2.5-flare"), 10, 1024)["ratio_note"])
+        self.assertIsNone(sizing.resolve(models.get("gpt-image-2.5-flare"), 2, 1024)["ratio_note"])
+        self.assertIn("고정 비율", sizing.resolve(models.get("nano-banana-2"), 2.9, 1024)["ratio_note"])
+        self.assertEqual(sizing.cropped_size(1000, 1000, 0.5), (500, 1000))
+        self.assertEqual(sizing.cropped_size(1000, 500, 4.0), (1000, 250))
+
+
 class ImagingTests(unittest.TestCase):
     def test_api_mask_alpha_zero_where_painted(self):
         painted = Image.new("RGBA", (40, 40), (0, 0, 0, 0))

@@ -97,6 +97,8 @@ function createModelPicker(host, { storeKey, onChange }) {
           <span class="nm">${esc(m.label)}</span><span class="pr">${p ? `${fmtUsd(p.per_image_usd)}${p.approx ? "~" : ""}/장` : ""}</span></div>
         <div class="tg">${esc(m.tagline)}</div>
         <div class="bd">${badges}</div>
+        ${p?.est_dpi ? `<div class="dpi ${p.est_dpi < p.target_dpi ? "low" : "ok"}">예상 실제 DPI ${p.approx ? "약 " : ""}${p.est_dpi}${p.est_dpi < p.target_dpi ? ` ⚠ 목표 ${p.target_dpi} 미달 (모델 해상도 한도)` : " ✓"}</div>` : ""}
+        ${p?.ratio_note ? `<div class="adj">${esc(p.ratio_note)}</div>` : ""}
         <details><summary>장단점 · 사이즈</summary>
           <ul>${m.pros.map((x) => `<li>👍 ${esc(x)}</li>`).join("")}${m.cons.map((x) => `<li>👎 ${esc(x)}</li>`).join("")}</ul>
           ${p ? `<div>출력 크기: ${p.width}×${p.height}px${p.approx ? " (대략, Gemini는 단계별 고정)" : ""}</div>` : ""}

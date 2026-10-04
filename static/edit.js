@@ -132,7 +132,7 @@ const refreshEditEstimate = debounce(async () => {
   const n = Math.max(1, +$("#eN").value || 1);
   fillQuality($("#eQuality"), $("#eQualityBox"), ids);
   transparentHint($("#eTransHint"), ids);
-  const geom = { mode: "ratio", aspect: ed.file ? $("#eBase").width / $("#eBase").height : 1, tier: $("#eTier").value === "orig" ? "1K" : $("#eTier").value };
+  const geom = { mode: "ratio", aspect: ed.file ? Math.min(20, Math.max(0.05, $("#eBase").width / $("#eBase").height)) : 1, tier: $("#eTier").value === "orig" ? "1K" : $("#eTier").value };
   try {
     const est = await fetchEstimates({ models: ids, quality: $("#eQuality").value, geometry: geom, n, edit: true, n_refs: ed.refs.length });
     ed.picker.setPrices(est);

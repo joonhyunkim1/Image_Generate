@@ -194,13 +194,19 @@ def estimate(body: EstimateIn):
         m = models.BY_ID.get(mid)
         if not m:
             continue
-        geom, _ = _geom_for(m, body.geometry)
+        geom, aspect = _geom_for(m, body.geometry)
         q = _pick_quality(m, body.quality)
         per = pricing.estimate_per_image(m, quality=q, width=geom["width"], height=geom["height"], tier=geom["tier"],
                                          edit=body.edit, n_input_images=1 + body.n_refs)
-        out.append({"id": mid, "width": geom["width"], "height": geom["height"], "approx": geom["approx"],
-                    "aspect_label": geom["aspect_label"], "tier": geom["tier"], "quality": q,
-                    "per_image_usd": round(per, 5), "total_usd": round(per * max(1, body.n), 5)})
+        item = {"id": mid, "width": geom["width"], "height": geom["height"], "approx": geom["approx"],
+                "aspect_label": geom["aspect_label"], "tier": geom["tier"], "quality": q, "ratio_note": geom["ratio_note"],
+                "per_image_usd": round(per, 5), "total_usd": round(per * max(1, body.n), 5)}
+        pm = _print_info(body.geometry)
+        if pm:  # 정확한 비율로 자른 뒤의 실제 DPI 예상
+            cw, ch = sizing.cropped_size(geom["width"], geom["height"], aspect)
+            item["est_dpi"] = round(min(cw / (pm[0] / 25.4), ch / (pm[1] / 25.4)))
+            item["target_dpi"] = float(body.geometry.get("dpi") or 300)
+        out.append(item)
     return {"estimates": out, "usd_krw": settings.usd_krw}
 
 
@@ -308,6 +314,10 @@ async def generate(body: GenerateIn):
     images = [await asyncio.to_thread(_finalize, r, model=m, prompt=prompt, purpose="generate", crop_aspect=crop,
                                       print_mm=pm) for r in results]
     notes = []
+    if geom["ratio_note"] and (body.exact_crop or pm):
+        notes.append(geom["ratio_note"] + " 요청한 비율에 맞춰 가운데를 잘라서 해상도가 줄어듭니다.")
+    elif geom["ratio_note"]:
+        notes.append(geom["ratio_note"])
     if body.transparent and not m["transparent"]:
         notes.append("이 모델은 투명 배경을 지원하지 않아 일반 배경으로 생성했습니다.")
     if want_t and images and not any(i["transparent"] for i in images):

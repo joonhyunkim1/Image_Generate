@@ -69,34 +69,78 @@ def resolve(model: dict, aspect: float, long_edge: float) -> dict:
         # Gemini는 단계별 '대략적' 크기. 화면 표시용 근사치(실제 크기는 응답 이미지에서 읽음)
         w, h = (edge, edge / ratio) if ratio >= 1 else (edge * ratio, edge)
         w, h = int(round(w)), int(round(h))
+        note = None
+        if abs(math.log(ratio / aspect)) > 0.02:
+            note = f"이 모델은 고정 비율만 지원해 가장 가까운 {label}로 생성합니다."
         return dict(width=w, height=h, api_size=None, image_size=tier, aspect_label=label,
-                    megapixels=w * h / 1e6, tier=tier, approx=True)
+                    megapixels=w * h / 1e6, tier=tier, approx=True, ratio_note=note)
     lim = OPENAI_LIMITS if kind == "openai" else BFL_LIMITS
     w, h = _fit(aspect, long_edge, **lim)
+    note = None
+    if aspect > lim["max_ratio"] * 1.001 or aspect < 1 / lim["max_ratio"] / 1.001:
+        note = f"이 모델의 최대 비율은 {lim['max_ratio']:g}:1이라 그 비율로 생성합니다."
     return dict(width=w, height=h, api_size=f"{w}x{h}", image_size=None, aspect_label=None,
-                megapixels=w * h / 1e6, tier=None, approx=False)
+                megapixels=w * h / 1e6, tier=None, approx=False, ratio_note=note)
+
+
+# ---- 사용자 입력 허용 범위 (화면 안내문과 동일하게 유지) ----
+RANGE_ASPECT_SIDE = (0.1, 100.0)   # 비율의 가로/세로 각 값
+RANGE_ASPECT_RATIO = 20.0          # 가로:세로 전체 비율은 1:20 ~ 20:1
+RANGE_EDGE_PX = (256, 4096)        # '직접 입력' 해상도: 긴 변 픽셀
+RANGE_MM = (5, 2000)               # 인쇄 가로/세로 mm
+RANGE_DPI = (72, 1200)
+
+
+def _num(v, label: str, lo: float, hi: float, unit: str = "") -> float:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label}: 숫자를 입력하세요. ({lo:g}~{hi:g}{unit})")
+    if not math.isfinite(x) or not (lo <= x <= hi):
+        raise ValueError(f"{label}: {lo:g}~{hi:g}{unit} 범위로 입력하세요.")
+    return x
+
+
+def parse_aspect(a) -> float:
+    """'16:9' 형식 또는 숫자(가로/세로). 범위를 벗어나면 ValueError."""
+    if isinstance(a, str) and ":" in a:
+        aw, ah = a.split(":", 1)
+        w = _num(aw, "비율 가로", *RANGE_ASPECT_SIDE)
+        h = _num(ah, "비율 세로", *RANGE_ASPECT_SIDE)
+        aspect = w / h
+    else:
+        aspect = _num(a, "비율", 1 / RANGE_ASPECT_RATIO, RANGE_ASPECT_RATIO)
+    if not (1 / RANGE_ASPECT_RATIO <= aspect <= RANGE_ASPECT_RATIO):
+        raise ValueError(f"비율: 가로:세로가 1:{RANGE_ASPECT_RATIO:g} ~ {RANGE_ASPECT_RATIO:g}:1 범위여야 합니다.")
+    return aspect
 
 
 def request_geometry(payload: dict) -> tuple[float, float]:
-    """요청에서 (종횡비, 목표 긴 변 px)을 구한다.
-    payload: mode='ratio'|'print'; ratio 모드는 aspect('W:H' 또는 숫자)+tier, print 모드는 width_mm,height_mm,dpi
+    """요청에서 (종횡비, 목표 긴 변 px)을 구한다. 범위를 벗어나면 ValueError(한국어 안내).
+    payload: mode='ratio'|'print'
+      ratio: aspect('W:H'), tier('1K'|'2K'|'4K'|'custom'), long_edge(tier=custom일 때 px)
+      print: width_mm, height_mm, dpi
     """
     if payload.get("mode") == "print":
-        w_mm, h_mm = float(payload["width_mm"]), float(payload["height_mm"])
-        if not (5 <= w_mm <= 2000 and 5 <= h_mm <= 2000):
-            raise ValueError("인쇄 크기는 5~2000mm 범위로 입력하세요.")
-        dpi = float(payload.get("dpi") or 300)
-        if not (72 <= dpi <= 1200):
-            raise ValueError("DPI는 72~1200 범위로 입력하세요.")
+        w_mm = _num(payload.get("width_mm"), "가로(mm)", *RANGE_MM, "mm")
+        h_mm = _num(payload.get("height_mm"), "세로(mm)", *RANGE_MM, "mm")
+        dpi = _num(payload.get("dpi") or 300, "DPI", *RANGE_DPI)
+        aspect = w_mm / h_mm
+        if not (1 / RANGE_ASPECT_RATIO <= aspect <= RANGE_ASPECT_RATIO):
+            raise ValueError(f"인쇄 크기: 가로:세로 비율이 1:{RANGE_ASPECT_RATIO:g} ~ {RANGE_ASPECT_RATIO:g}:1 범위여야 합니다.")
         wp, hp = print_to_px(w_mm, h_mm, dpi)
-        return w_mm / h_mm, max(wp, hp)
-    a = payload.get("aspect", "1:1")
-    if isinstance(a, str) and ":" in a:
-        aw, ah = a.split(":", 1)
-        aspect = float(aw) / float(ah)
-    else:
-        aspect = float(a)
-    if aspect <= 0:
-        raise ValueError("종횡비가 올바르지 않습니다.")
+        return aspect, max(wp, hp)
+    aspect = parse_aspect(payload.get("aspect", "1:1"))
     tier = payload.get("tier", "1K")
-    return aspect, float(TIERS.get(tier, 1024))
+    if tier == "custom":
+        return aspect, _num(payload.get("long_edge"), "긴 변 픽셀", *RANGE_EDGE_PX, "px")
+    if tier not in TIERS:
+        raise ValueError(f"해상도 단계는 {', '.join(TIERS)} 또는 직접 입력(custom)이어야 합니다.")
+    return aspect, float(TIERS[tier])
+
+
+def cropped_size(width: int, height: int, aspect: float) -> tuple[int, int]:
+    """(width, height) 이미지를 aspect로 중앙 크롭했을 때의 크기."""
+    if width / height > aspect:
+        return int(round(height * aspect)), height
+    return width, int(round(width / aspect))
