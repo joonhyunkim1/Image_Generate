@@ -43,7 +43,11 @@ def is_valid_openai_key(k: str) -> bool:
 
 
 def is_valid_gemini_key(k: str) -> bool:
-    return k.startswith("AIza") and len(k) >= 30
+    """Gemini 키는 기존 'AIza…'(Standard 키)와 새로 발급되는 'AQ.Ab…'(Auth 키) 두 형식이 있다.
+    형식은 가볍게만 검사하고, 실제 유효 여부는 '키 확인'(제공사 호출)에서 판단한다."""
+    if any(c.isspace() for c in k) or "..." in k:
+        return False
+    return (k.startswith("AIza") and len(k) >= 30) or (k.startswith("AQ.") and len(k) >= 20)
 
 
 def is_valid_bfl_key(k: str) -> bool:

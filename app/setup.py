@@ -94,7 +94,7 @@ def _validate(key: str, raw) -> str:
     t = f["type"]
     if t == "secret" and v:
         if key in KEY_CHECKS and not KEY_CHECKS[key](v):
-            hint = {"OPENAI_API_KEY": "'sk-'로 시작하는 전체 키", "GEMINI_API_KEY": "'AIza'로 시작하는 전체 키",
+            hint = {"OPENAI_API_KEY": "'sk-'로 시작하는 전체 키", "GEMINI_API_KEY": "'AQ.' 또는 'AIza'로 시작하는 전체 키",
                     "BFL_API_KEY": "BFL 대시보드의 전체 키"}[key]
             raise SetupError(f"{key} 형식이 올바르지 않습니다. {hint}를 붙여넣으세요.")
         if key == "OPENAI_ADMIN_KEY" and not v.startswith("sk-admin-"):
@@ -173,6 +173,9 @@ def test_key(provider: str, key: str | None) -> dict:
             r = httpx.get("https://generativelanguage.googleapis.com/v1beta/models", params={"pageSize": 200},
                           headers={"x-goog-api-key": key}, timeout=15)
             if r.status_code != 200:
+                if r.status_code in (400, 401, 403):
+                    return {"ok": False, "error": "구글이 이 키를 인증하지 못했습니다. 키를 처음부터 끝까지 복사했는지, AI Studio에서 삭제·제한된 키는 아닌지 확인하세요. "
+                                                  f"(HTTP {r.status_code}: {_msg(r)[:120]})"}
                 return {"ok": False, "error": f"HTTP {r.status_code}: {_msg(r)[:160]}"}
             names = {m["name"].split("/")[-1] for m in r.json().get("models", [])}
             return {"ok": True, "models": {"nano-banana-2": "gemini-3.1-flash-image" in names}}

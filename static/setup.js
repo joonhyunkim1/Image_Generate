@@ -15,10 +15,10 @@ const PROVIDER_GUIDE = {
   },
   gemini: {
     title: "Google (Nano Banana 2)", env: "GEMINI_API_KEY", models: ["Nano Banana 2"],
-    placeholder: "AIza로 시작하는 키", link: "https://aistudio.google.com/apikey",
+    placeholder: "AQ.Ab… 또는 AIza…로 시작하는 키", link: "https://aistudio.google.com/apikey",
     steps: [
       `<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio → API keys</a>에 구글 계정으로 로그인합니다.`,
-      `<b>Create API key</b>로 프로젝트를 선택(또는 새로 생성)해 키(<code>AIza…</code>)를 만듭니다.`,
+      `<b>Create API key</b>로 프로젝트를 선택(또는 새로 생성)해 키를 만듭니다. 새로 발급되는 키는 <code>AQ.Ab…</code> 형식이고, 예전 <code>AIza…</code> 키도 입력할 수 있습니다(단, 구글이 2026년 9월부터 AIza 키를 거절할 수 있어 새 키 사용을 권장).`,
       `이미지 생성 모델은 무료 등급에서 제한되거나 막혀 있을 수 있어, 해당 프로젝트에 <b>결제(Billing)를 연결</b>해야 할 수 있습니다. (AI Studio의 프로젝트 화면에서 <i>Set up billing</i>)`,
       `아래에 붙여넣고 <b>키 확인</b> → 맨 아래 <b>저장</b>.`,
     ],

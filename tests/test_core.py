@@ -125,6 +125,17 @@ class ImagingTests(unittest.TestCase):
         self.assertTrue(imaging.has_transparency(Image.new("RGBA", (4, 4), (0, 0, 0, 0))))
 
 
+class KeyFormatTests(unittest.TestCase):
+    def test_gemini_key_formats(self):
+        from app.config import is_valid_bfl_key, is_valid_gemini_key, is_valid_openai_key
+        self.assertTrue(is_valid_gemini_key("AQ.Ab8RN6" + "x" * 40))          # 새 형식 (Auth 키)
+        self.assertTrue(is_valid_gemini_key("AIzaSy" + "x" * 33))             # 기존 형식
+        for bad in ["", "abc", "AQ.", "AQ.short", "AIzaShort", "AQ.Ab " + "x" * 30, "AQ.Ab..." + "x" * 30, "sk-" + "x" * 40]:
+            self.assertFalse(is_valid_gemini_key(bad), bad)
+        self.assertTrue(is_valid_openai_key("sk-proj-" + "x" * 30))
+        self.assertTrue(is_valid_bfl_key("0123456789abcdef0123456789abcdef"))
+
+
 class PricingTests(unittest.TestCase):
     def test_estimates(self):
         m = models.get("gpt-image-2.5-flare")
