@@ -170,3 +170,25 @@ details.guide summary { cursor: pointer; font-weight: 600; } details.guide ol { 
 input.bad { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
 .mcard .dpi { margin: 2px 0 0 24px; font-size: 12px; } .mcard .dpi.low { color: var(--warn); font-weight: 700; } .mcard .dpi.ok { color: var(--ok); }
 .mcard .adj { margin: 2px 0 0 24px; font-size: 11.5px; color: var(--warn); }
+
+.modal-box.wide { max-width: 1200px; }
+.viewer { outline: none; }
+.viewer-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.zlabel { min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; }
+.viewer-stage { position: relative; overflow: hidden; height: min(66vh, 720px); background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; touch-action: none; user-select: none; }
+.viewer-stage .viewer-img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none !important; max-height: none !important; margin: 0; display: block; will-change: transform; }
+
+/* 수정 기록 막대 */
+.side-pane.right { border-left: 1px solid var(--border); border-right: 0; width: 280px; padding-top: 14px; }
+.hist-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.hist-item { position: relative; border: 1px solid var(--border); border-radius: 9px; padding: 8px; margin-bottom: 8px; cursor: pointer; background: var(--panel); }
+.hist-item:hover { background: var(--panel-2); }
+.hist-item.active { border-color: var(--accent); background: var(--accent-soft); }
+.hist-thumbs { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+.hist-thumbs img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); background-color: var(--checker-a); }
+.hist-thumbs .arrow { color: var(--muted); font-size: 12px; }
+.hist-thumbs .more { font-size: 11px; color: var(--muted); }
+.hist-prompt { font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.hist-meta { font-size: 11.5px; color: var(--muted); margin-top: 4px; display: flex; flex-wrap: wrap; gap: 2px 8px; }
+.hist-item .x { position: absolute; top: 4px; right: 4px; background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 6px; }
+.hist-item .x:hover { background: var(--danger-soft); color: var(--danger); }

@@ -1,5 +1,5 @@
 /* 이미지 수정 페이지: 이미지 첨부 + 브러시 마스크 + 프롬프트 */
-const ed = { file: null, refs: [], picker: null, board: null, busy: false, tool: "brush", drawing: false, undo: [], maskScale: 1 };
+const ed = { file: null, refs: [], picker: null, board: null, busy: false, tool: "brush", drawing: false, undo: [], maskScale: 1, activeRun: null };
 const MASK_MAX = 1024;
 
 function initEdit() {
@@ -27,6 +27,7 @@ function initEdit() {
   ["eN", "eTier", "eQuality"].forEach((id) => ($("#" + id).oninput = refreshEditEstimate));
   $("#eGo").onclick = runEdit;
   setupMaskDrawing();
+  initHistory();
   ed.picker.render();
   refreshEditEstimate();
 }
@@ -43,27 +44,37 @@ function renderRefs() {
   });
 }
 
-function loadEditFile(file) {
-  if (!/^image\//.test(file.type)) return toast("이미지 파일을 선택하세요.");
+function loadEditFile(file, { maskUrl = null } = {}) {
+  if (!/^image\//.test(file.type)) { toast("이미지 파일을 선택하세요."); return Promise.resolve(false); }
   ed.file = file;
-  const img = new Image();
-  img.onload = () => {
-    const base = $("#eBase"), mask = $("#eMask");
-    base.width = img.naturalWidth; base.height = img.naturalHeight;
-    base.getContext("2d").drawImage(img, 0, 0);
-    ed.maskScale = Math.min(1, MASK_MAX / Math.max(img.naturalWidth, img.naturalHeight));
-    mask.width = Math.round(img.naturalWidth * ed.maskScale);
-    mask.height = Math.round(img.naturalHeight * ed.maskScale);
-    ed.undo = [];
-    $("#eEmpty").hidden = true;
-    $("#eEditor").hidden = false;
-    $("#eCanvasWrap").style.width = `min(${Math.min(img.naturalWidth, 760)}px, 100%)`;
-    $("#eDrop").querySelector("b").textContent = `✓ ${file.name}`;
-    updateEditInfo();
-    refreshEditEstimate();
-    URL.revokeObjectURL(img.src);
-  };
-  img.src = URL.createObjectURL(file);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = async () => {
+      const base = $("#eBase"), mask = $("#eMask");
+      base.width = img.naturalWidth; base.height = img.naturalHeight;
+      base.getContext("2d").drawImage(img, 0, 0);
+      ed.maskScale = Math.min(1, MASK_MAX / Math.max(img.naturalWidth, img.naturalHeight));
+      mask.width = Math.round(img.naturalWidth * ed.maskScale);
+      mask.height = Math.round(img.naturalHeight * ed.maskScale);
+      ed.undo = [];
+      $("#eEmpty").hidden = true;
+      $("#eEditor").hidden = false;
+      $("#eCanvasWrap").style.width = `min(${Math.min(img.naturalWidth, 760)}px, 100%)`;
+      $("#eDrop").querySelector("b").textContent = `✓ ${file.name}`;
+      URL.revokeObjectURL(img.src);
+      if (maskUrl) {  // 기록에서 불러온 마스크를 캔버스에 다시 그린다
+        try {
+          const m = new Image();
+          await new Promise((res, rej) => { m.onload = res; m.onerror = rej; m.src = maskUrl; });
+          mask.getContext("2d").drawImage(m, 0, 0, mask.width, mask.height);
+        } catch { toast("저장된 마스크를 불러오지 못했습니다."); }
+      }
+      updateEditInfo();
+      refreshEditEstimate();
+      resolve(true);
+    };
+    img.src = URL.createObjectURL(file);
+  });
 }
 
 function setupMaskDrawing() {
@@ -151,12 +162,14 @@ async function runEdit() {
   $("#eGo").disabled = true;
   $("#eGo").textContent = "수정 중...";
   const maskBlob = maskHasPaint() ? await new Promise((r) => $("#eMask").toBlob(r, "image/png")) : null;
+  const runId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);  // 이번 수정에 쓴 모델들을 하나의 기록으로 묶는 ID
   await Promise.all(ids.map(async (id) => {
     const m = modelById(id);
     const col = ed.board.column(id, m.label);
     col.loading(`${m.label} 수정 중...`);
     const fd = new FormData();
     fd.append("model", id);
+    fd.append("run_id", runId);
     fd.append("prompt", prompt);
     fd.append("n", Math.min(Math.max(1, +$("#eN").value || 1), m.max_n));
     fd.append("quality", $("#eQuality").value || "");
@@ -172,6 +185,8 @@ async function runEdit() {
   $("#eGo").disabled = false;
   $("#eGo").textContent = "✏️ 이미지 수정";
   refreshBrief();
+  ed.activeRun = runId;
+  loadHistory();
 }
 
 /* 다른 페이지(생성 결과, 갤러리)에서 이미지를 수정 페이지로 보내기 */
@@ -180,4 +195,76 @@ async function sendToEdit(url, name) {
   switchView("edit");
   loadEditFile(new File([blob], name, { type: blob.type || "image/png" }));
   toast("수정 페이지로 이미지를 보냈습니다.");
+}
+
+/* ---------------- 수정 기록(히스토리) 막대 ---------------- */
+const fmtBytes = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + "MB" : Math.max(1, Math.round(b / 1024)) + "KB");
+const fmtTs = (ts) => ts.slice(5, 16).replace("T", " ");
+
+async function loadHistory() {
+  let d;
+  try { d = await api("/api/edit-history"); } catch (e) { $("#hList").innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  $("#hInfo").textContent = d.runs.length ? `${d.runs.length}건 · ${fmtBytes(d.total_bytes)} 사용 · 최대 ${d.max_runs}건 보관(넘으면 오래된 것부터 삭제)` : "";
+  $("#hClearAll").hidden = !d.runs.length;
+  if (!d.runs.length) {
+    $("#hList").innerHTML = `<div class="empty-state" style="padding:24px 10px"><p style="margin:0">아직 수정 기록이 없습니다.<br/>이미지를 수정하면 여기에 쌓이고, 클릭하면 그때의 이미지·마스크·설정·결과를 다시 불러옵니다.</p></div>`;
+    return;
+  }
+  $("#hList").innerHTML = "";
+  d.runs.forEach((r) => {
+    const el = document.createElement("div");
+    el.className = "hist-item" + (r.run_id === ed.activeRun ? " active" : "");
+    el.title = `${r.prompt}\n\n클릭하면 이 수정을 다시 불러옵니다.`;
+    const extra = r.image_count - r.thumbs.length;
+    el.innerHTML = `
+      <button class="x" title="이 기록 삭제">✕</button>
+      <div class="hist-thumbs"><img src="${r.source_thumb}" loading="lazy" alt="원본" /><span class="arrow">→</span>
+        ${r.thumbs.slice(0, 3).map((u) => `<img src="${u}" loading="lazy" alt="결과" />`).join("")}${extra > 0 || r.thumbs.length > 3 ? `<span class="more">+${Math.max(extra, 1)}</span>` : ""}</div>
+      <div class="hist-prompt">${esc(r.prompt)}</div>
+      <div class="hist-meta"><span>${esc(fmtTs(r.ts))}</span><span>${r.models.map((m) => esc(m.label)).join(", ")}</span>
+        <span>${r.image_count}장</span>${r.has_mask ? `<span>🖌 마스크</span>` : ""}<span>${state.config.demo_mode ? "데모" : fmtUsd(r.cost_usd)}</span></div>`;
+    el.onclick = (e) => { if (!e.target.closest(".x")) restoreHistory(r.run_id); };
+    $(".x", el).onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm("이 수정 기록을 삭제할까요? 기록에 보관된 원본·결과 이미지가 지워집니다. (저장한 이미지는 영향 없음)")) return;
+      await api(`/api/edit-history/${r.run_id}`, { method: "DELETE" });
+      if (ed.activeRun === r.run_id) ed.activeRun = null;
+      loadHistory();
+    };
+    $("#hList").appendChild(el);
+  });
+}
+
+async function restoreHistory(runId) {
+  if (ed.busy) return toast("수정이 진행 중입니다. 끝난 뒤 불러오세요.");
+  const d = await api(`/api/edit-history/${runId}/restore`, { method: "POST" });
+  const blob = await (await fetch(d.source_url)).blob();
+  await loadEditFile(new File([blob], `history_${runId}.png`, { type: blob.type || "image/png" }), { maskUrl: d.mask_url });
+  const s = d.settings;
+  $("#ePrompt").value = s.prompt;
+  $("#eN").value = s.n;
+  $("#eTier").value = s.tier;
+  $("#eTransparent").checked = s.transparent;
+  $("#eKeep").checked = s.keep_outside;
+  ed.picker.select(s.models.filter((id) => modelById(id)?.usable));
+  if (s.quality) { const qs = $("#eQuality"); if ([...qs.options].some((o) => o.value === s.quality)) qs.value = s.quality; }
+  ed.board.clear();
+  d.columns.forEach((c) => { const col = ed.board.column(c.model, c.label); col.done({ images: c.images, notes: c.notes, errors: c.errors, cost_usd: c.cost_usd }); });
+  ed.activeRun = runId;
+  loadHistory();
+  toast("수정 기록을 불러왔습니다. 프롬프트를 고쳐 다시 실행하거나 결과를 이어서 수정할 수 있어요.");
+}
+
+function initHistory() {
+  const apply = (open) => { $("#eHistory").hidden = !open; ls.set("histOpen", open); };
+  apply(ls.get("histOpen", true));
+  $("#hToggle").onclick = () => apply($("#eHistory").hidden);
+  $("#hClearAll").onclick = async () => {
+    if (!confirm("모든 수정 기록을 삭제할까요? 기록에 보관된 원본·결과 이미지가 모두 지워집니다. (저장한 이미지는 영향 없음)")) return;
+    await api("/api/edit-history", { method: "DELETE" });
+    ed.activeRun = null;
+    loadHistory();
+    toast("수정 기록을 모두 삭제했습니다.");
+  };
+  loadHistory();
 }

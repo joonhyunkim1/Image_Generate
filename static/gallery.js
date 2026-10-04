@@ -20,13 +20,14 @@ async function renderGallery() {
         <span>${r.purpose === "edit" ? "수정" : "생성"} · ${esc(r.ts.replace("T", " "))}</span></div>
       <div class="info" title="${esc(r.prompt)}">${esc(r.prompt.slice(0, 80))}${r.prompt.length > 80 ? "…" : ""}</div>
       <div class="acts">
-        <a class="btn sm" href="${r.url}?download=true">⬇ 다운로드</a>
+        <button class="btn sm" data-a="saveas" title="다른 이름으로 저장 — 저장 위치와 파일 이름을 직접 정합니다">⬇ 다운로드</button>
         <button class="btn sm" data-a="edit">✏️ 수정</button>
         <button class="btn sm" data-a="reuse">프롬프트 재사용</button>
         <button class="btn sm ghost danger" data-a="del">삭제</button>
       </div>`;
     const img = $("img", el);
-    if (img) img.onclick = () => openModal(r.filename, `<div class="checker"><img src="${r.url}" /></div><pre class="prompt">${esc(r.prompt)}</pre>`);
+    if (img) img.onclick = () => openImageViewer(`${r.filename} · ${r.width}×${r.height}`, r.url, `<pre class="prompt">${esc(r.prompt)}</pre>`);
+    $("[data-a=saveas]", el).onclick = () => saveAs(r.url, r.filename);
     $("[data-a=edit]", el).onclick = () => sendToEdit(r.url, r.filename);
     $("[data-a=reuse]", el).onclick = () => { $("#gPrompt").value = r.prompt; switchView("generate"); toast("프롬프트를 불러왔습니다."); };
     $("[data-a=del]", el).onclick = async () => {

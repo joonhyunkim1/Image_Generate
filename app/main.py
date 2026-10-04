@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, imaging, models, pricing, providers, setup, sizing, usage
+from . import db, history, imaging, models, pricing, providers, setup, sizing, usage
 from .config import BASE_DIR, settings
 
 # Windows는 레지스트리 설정에 따라 .js가 text/plain으로 내려가는 경우가 있어 명시적으로 고정
@@ -330,7 +330,7 @@ async def generate(body: GenerateIn):
 @app.post("/api/edit")
 async def edit(
     model: str = Form(...), prompt: str = Form(...), n: int = Form(1), quality: str = Form(""),
-    tier: str = Form("orig"), transparent: bool = Form(False), keep_outside: bool = Form(True),
+    tier: str = Form("orig"), transparent: bool = Form(False), keep_outside: bool = Form(True), run_id: str = Form(""),
     image: UploadFile = File(...), mask: UploadFile | None = File(None), refs: list[UploadFile] = File(default=[]),
 ):
     prompt = prompt.strip()
@@ -395,8 +395,60 @@ async def edit(
         notes.append("이 모델은 투명 배경을 지원하지 않아 일반 배경으로 처리했습니다.")
     if painted is not None and not m["mask"]:
         notes.append("이 모델은 마스크 편집을 지원하지 않아 '붉게 표시한 안내 이미지'로 수정 영역을 알려주었습니다. 정확도는 모델에 따라 다릅니다.")
-    return {"model": m["id"], "label": m["label"], "images": images, "errors": errors, "notes": notes,
-            "cost_usd": round(sum(r.cost_usd for r in results), 5)}
+    cost = round(sum(r.cost_usd for r in results), 5)
+    if images:  # 수정 기록(히스토리)에 저장 — 실패해도 수정 결과 자체는 돌려준다
+        try:
+            await asyncio.to_thread(
+                history.add, run_id=run_id if history.ID_RE.match(run_id) else history.new_id(), model=m, prompt=prompt, n=n,
+                quality=q, tier=tier, transparent=transparent, keep_outside=keep_outside, source_png=work_png,
+                mask_png=painted_bytes if painted is not None else None, src_size=work.size, images=images,
+                notes=notes, errors=errors, cost_usd=cost)
+        except Exception:  # noqa: BLE001
+            log.exception("수정 기록 저장 실패")
+    return {"model": m["id"], "label": m["label"], "images": images, "errors": errors, "notes": notes, "cost_usd": cost}
+
+
+# ---------------- 이미지 수정 기록 ----------------
+
+@app.get("/api/edit-history")
+def edit_history_list(limit: int = 60):
+    return history.list_runs(max(1, min(limit, 200)))
+
+
+@app.get("/api/edit-history/{run_id}/file/{name}")
+def edit_history_file(run_id: str, name: str):
+    try:
+        p = history.file_path(run_id, name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not p:
+        raise HTTPException(404, "기록 파일을 찾을 수 없습니다.")
+    return FileResponse(p, media_type="image/png" if p.suffix == ".png" else "image/jpeg")
+
+
+@app.post("/api/edit-history/{run_id}/restore")
+def edit_history_restore(run_id: str):
+    if not history.ID_RE.match(run_id):
+        raise HTTPException(400, "잘못된 기록 ID입니다.")
+    r = history.restore(run_id)
+    if not r:
+        raise HTTPException(404, "기록을 찾을 수 없습니다.")
+    return r
+
+
+@app.delete("/api/edit-history/{run_id}")
+def edit_history_delete(run_id: str):
+    try:
+        history.delete_run(run_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.delete("/api/edit-history")
+def edit_history_clear():
+    history.clear_all()
+    return {"ok": True}
 
 
 # ---------------- 후보 / 저장 이미지 ----------------

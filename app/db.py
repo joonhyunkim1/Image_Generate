@@ -34,6 +34,26 @@ CREATE TABLE IF NOT EXISTS saved_images (
   cost_usd REAL NOT NULL DEFAULT 0,
   meta TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS edit_history (     -- 이미지 수정 기록 (모델 1회 요청 = 1행, 같은 run_id끼리 한 번의 수정)
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  n INTEGER NOT NULL DEFAULT 1,
+  quality TEXT NOT NULL DEFAULT '',
+  tier TEXT NOT NULL DEFAULT 'orig',
+  transparent INTEGER NOT NULL DEFAULT 0,
+  keep_outside INTEGER NOT NULL DEFAULT 1,
+  has_mask INTEGER NOT NULL DEFAULT 0,
+  src_w INTEGER, src_h INTEGER,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  results TEXT NOT NULL DEFAULT '[]',         -- JSON: [{file, thumb, width, height, ext, ...}]
+  notes TEXT NOT NULL DEFAULT '[]',
+  errors TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_edit_history_run ON edit_history(run_id);
+CREATE INDEX IF NOT EXISTS idx_edit_history_ts ON edit_history(ts);
 CREATE TABLE IF NOT EXISTS manual_billing (   -- 제공사 청구 화면에서 확인한 금액을 사용자가 직접 입력
   provider TEXT NOT NULL,
   month TEXT NOT NULL,                        -- YYYY-MM

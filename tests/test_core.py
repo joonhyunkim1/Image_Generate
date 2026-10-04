@@ -246,6 +246,80 @@ class BillingTests(unittest.TestCase):
         self.assertEqual((e.year, e.month), (2027, 1))
 
 
+class HistoryTests(unittest.TestCase):
+    """이미지 수정 기록: 묶음/복원/자동 정리/경로 검증 (임시 폴더 + 메모리 DB)."""
+    def setUp(self):
+        import sqlite3, tempfile
+        from pathlib import Path
+        from app import db, history
+        self.db, self.history = db, history
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.old = (db._conn, settings.data_dir, settings.temp_dir)
+        (root / "temp").mkdir()
+        settings.data_dir, settings.temp_dir = root, root / "temp"
+        db._conn = sqlite3.connect(":memory:", check_same_thread=False)
+        db._conn.row_factory = sqlite3.Row
+        db._conn.executescript(db.SCHEMA)
+
+    def tearDown(self):
+        self.db._conn, settings.data_dir, settings.temp_dir = self.old
+        self.tmp.cleanup()
+
+    def add(self, run, model="gpt-image-2.5-flare", n_images=2, mask=True, prompt="p"):
+        h = self.history
+        imgs = []
+        for i in range(n_images):
+            iid = h.new_id()
+            (settings.temp_dir / f"{iid}.png").write_bytes(png_bytes((50, 40)))
+            imgs.append({"id": iid, "ext": "png", "width": 50, "height": 40, "dpi": None, "cost_usd": 0.01, "basis": "actual", "transparent": False})
+        return h.add(run_id=run, model=models.get(model), prompt=prompt, n=n_images, quality="high", tier="orig", transparent=False,
+                     keep_outside=True, source_png=png_bytes((100, 80)), mask_png=png_bytes((100, 80)) if mask else None,
+                     src_size=(100, 80), images=imgs, notes=["n"], errors=[], cost_usd=0.02)
+
+    def test_group_by_run_and_files(self):
+        h = self.history
+        self.add("a" * 12, "gpt-image-2.5-flare"); self.add("a" * 12, "nano-banana-2"); self.add("b" * 12, "flux-2-pro", mask=False)
+        runs = h.list_runs()["runs"]
+        self.assertEqual(len(runs), 2)
+        a = next(r for r in runs if r["run_id"] == "a" * 12)
+        self.assertEqual((len(a["models"]), a["image_count"], a["has_mask"], len(a["thumbs"])), (2, 4, True, 4))
+        self.assertAlmostEqual(a["cost_usd"], 0.04)
+        self.assertIsNotNone(h.file_path("a" * 12, "source")); self.assertIsNotNone(h.file_path("a" * 12, "mask"))
+        self.assertIsNone(h.file_path("b" * 12, "mask"))                      # 마스크 없는 기록
+        for bad in ("../x", "secret", "res_zzz_0", "source.png"):
+            with self.assertRaises(ValueError):
+                h.file_path("a" * 12, bad)
+        with self.assertRaises(ValueError):
+            h.file_path("../../etc", "source")
+
+    def test_restore_creates_independent_temp_copies(self):
+        h = self.history
+        self.add("c" * 12, "gpt-image-2.5-flare", prompt="복원 테스트")
+        before = set(p.name for p in settings.temp_dir.glob("*.png"))
+        r = h.restore("c" * 12)
+        self.assertEqual(r["settings"]["prompt"], "복원 테스트")
+        self.assertEqual(len(r["columns"][0]["images"]), 2)
+        new = set(p.name for p in settings.temp_dir.glob("*.png")) - before
+        self.assertEqual(len(new), 2)                                          # 새 임시 파일로 복사됨
+        self.assertTrue(all((settings.temp_dir / f"{i['id']}.json").exists() for i in r["columns"][0]["images"]))
+        self.assertIsNone(h.restore("d" * 12))
+
+    def test_prune_removes_oldest_and_delete(self):
+        h = self.history
+        for i in range(4):
+            self.add(f"{i}" * 12, mask=False)
+            self.db.execute("UPDATE edit_history SET ts=? WHERE run_id=?", (f"2026-10-0{i + 1}T10:00:00", f"{i}" * 12))
+        h.prune(max_runs=2)
+        left = {r["run_id"] for r in h.list_runs()["runs"]}
+        self.assertEqual(left, {"2" * 12, "3" * 12})                           # 오래된 0, 1 삭제
+        self.assertFalse((h.hist_dir() / ("0" * 12)).exists())
+        h.delete_run("3" * 12)
+        self.assertEqual({r["run_id"] for r in h.list_runs()["runs"]}, {"2" * 12})
+        h.clear_all()
+        self.assertEqual(h.list_runs()["runs"], [])
+
+
 class PricingTests(unittest.TestCase):
     def test_estimates(self):
         m = models.get("gpt-image-2.5-flare")
